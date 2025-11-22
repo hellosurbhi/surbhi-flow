@@ -20,9 +20,9 @@ interface ReflectionModalProps {
 
 const ReflectionModal: React.FC<ReflectionModalProps> = ({ open, onClose, onSubmit, taskTitle }) => {
   const [reflection, setReflection] = useState('');
-  const minWords = 200;
-  const wordCount = reflection.trim().split(/\s+/).filter(word => word.length > 0).length;
-  const isComplete = wordCount >= minWords;
+  const minCharacters = 500;
+  const characterCount = reflection.trim().length;
+  const isComplete = characterCount >= minCharacters;
 
   const handleSubmit = () => {
     if (isComplete) {
@@ -33,16 +33,48 @@ const ReflectionModal: React.FC<ReflectionModalProps> = ({ open, onClose, onSubm
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle>
-        Why don't you want to do this task?
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="md"
+      fullWidth
+      PaperProps={{
+        sx: {
+          backgroundColor: '#FFFFFF',
+        },
+      }}
+    >
+      <DialogTitle
+        sx={{
+          backgroundColor: '#FFFFFF',
+          color: '#000000',
+          fontWeight: 600,
+          fontSize: '20px',
+        }}
+      >
+        ✍️ Why don't you want to do this task?
       </DialogTitle>
-      <DialogContent>
-        <Typography variant="body2" color="text.secondary" gutterBottom>
+      <DialogContent sx={{ pt: 3 }}>
+        <Typography
+          variant="body1"
+          gutterBottom
+          sx={{
+            mb: 2,
+            p: 2,
+            borderRadius: 2,
+            backgroundColor: '#F2F2F7',
+            border: '1px solid #C7C7CC',
+            color: '#000000',
+          }}
+        >
           Task: <strong>{taskTitle}</strong>
         </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Please write at least {minWords} words reflecting on why you're avoiding this task.
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          sx={{ mb: 3, lineHeight: 1.7 }}
+        >
+          Please write at least <strong>{minCharacters} characters</strong> reflecting on why you're avoiding this task.
         </Typography>
         <TextField
           multiline
@@ -52,26 +84,61 @@ const ReflectionModal: React.FC<ReflectionModalProps> = ({ open, onClose, onSubm
           placeholder="Write your reflection here..."
           value={reflection}
           onChange={(e) => setReflection(e.target.value)}
-          sx={{ mb: 2 }}
+          sx={{
+            mb: 3,
+            '& .MuiOutlinedInput-root': {
+              fontSize: '1rem',
+              lineHeight: 1.6,
+            },
+          }}
         />
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <LinearProgress
             variant="determinate"
-            value={Math.min((wordCount / minWords) * 100, 100)}
-            sx={{ flexGrow: 1, height: 8, borderRadius: 4 }}
+            value={Math.min((characterCount / minCharacters) * 100, 100)}
+            sx={{
+              flexGrow: 1,
+              height: 10,
+              borderRadius: 5,
+            backgroundColor: '#E5E5EA',
+            '& .MuiLinearProgress-bar': {
+              backgroundColor: isComplete ? '#34C759' : '#007AFF',
+              borderRadius: 5,
+            },
+            }}
           />
-          <Typography variant="body2" color={isComplete ? 'success.main' : 'text.secondary'}>
-            {wordCount} / {minWords} words
+          <Typography
+            variant="body2"
+            sx={{
+              fontWeight: 600,
+              color: isComplete ? 'success.main' : 'text.secondary',
+              minWidth: 100,
+              textAlign: 'right',
+            }}
+          >
+            {characterCount} / {minCharacters} characters
           </Typography>
         </Box>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
+      <DialogActions sx={{ p: 3, pt: 2 }}>
+        <Button
+          onClick={onClose}
+          sx={{
+            fontWeight: 600,
+            px: 3,
+          }}
+        >
+          Cancel
+        </Button>
         <Button
           onClick={handleSubmit}
           variant="contained"
           color="primary"
           disabled={!isComplete}
+          sx={{
+            fontWeight: 600,
+            px: 4,
+          }}
         >
           Submit Reflection
         </Button>

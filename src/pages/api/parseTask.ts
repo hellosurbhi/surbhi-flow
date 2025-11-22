@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import axios from 'axios';
+import { GoogleGenAI } from '@google/genai';
 
 const apiKey = process.env.GEMINI_API_KEY;
 
@@ -17,48 +17,77 @@ export default async function handler(
     return res.status(400).json({ message: 'Input is required' });
   }
 
+  if (!apiKey) {
+    console.error('GEMINI_API_KEY is not set');
+    return res.status(500).json({ message: 'API key not configured' });
+  }
+
   try {
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-      {
-        contents: [
-          {
-            parts: [
-              {
-                text: `You are an assistant that converts natural language tasks into structured JSON. 
-Extract the following information:
-- title: A clear, concise task title
-- description: Optional description if provided
-- type: "single" for one-time tasks, "habit" for recurring tasks (look for words like "every", "weekly", "daily", "monthly", "repeat")
-- frequency: For habits, extract frequency (e.g., "every 2 weeks", "daily", "weekly", "monthly"). For single tasks, use null
-- deadline: Extract deadline description if mentioned (e.g., "in 1 hour", "tomorrow", "next week", "in 2 days"). Return as a string description or null. Do not convert to ISO format.
-- priority: Extract priority level (1-5, where 5 is highest). Look for words like "urgent", "important", "high priority", "low priority", or infer from context like deadlines
-- createdAt: Current timestamp in ISO format
-- nextDueDate: For habits, calculate the next due date based on frequency. For single tasks, use deadline or null
-- completed: false
-- deferred: false
-- reflection: null
+    // Initialize with API key
+    const ai = new GoogleGenAI({ apiKey });
 
-Parse this task: "${input}"
+    const prompt = `You are an intelligent task parser like Todoist. Parse natural language into structured JSON.
 
-Return ONLY valid JSON, no markdown, no explanation.`
-              }
-            ]
-          }
-        ],
-        generationConfig: {
-          responseMimeType: "application/json"
-        }
+EXAMPLES:
+- "call parents everyday priority one" → {title: "call parents", type: "habit", frequency: "daily", priority: 1}
+- "text boss back in 1 hour priority 5" → {title: "text boss back", type: "single", frequency: null, deadline: "in 1 hour", priority: 5}
+- "protein meal prep every sunday 9am" → {title: "protein meal prep", type: "habit", frequency: "every sunday 9am", priority: 2}
+- "review code urgent" → {title: "review code", type: "single", frequency: null, deadline: null, priority: 5}
+
+RULES:
+1. title: Extract the main task action. Remove frequency/priority words from title.
+2. type: "habit" if you see: every, daily, everyday, weekly, monthly, repeat, recurring, each day/week/month, or day names (sunday, monday, etc.). Otherwise "single".
+3. frequency: For habits, extract EXACTLY as mentioned: "daily", "everyday", "every day", "every sunday", "every monday 9am", "every 2 weeks", "weekly", "monthly", etc. For single tasks: null.
+4. deadline: Only for single tasks with time constraints: "in 1 hour", "tomorrow", "next week", "by friday", etc. For habits, use null.
+5. priority: Extract from explicit mentions:
+   - "priority 1" or "priority one" → 1
+   - "priority 2" or "priority two" → 2
+   - "priority 3" or "priority three" → 3
+   - "priority 4" or "priority four" → 4
+   - "priority 5" or "priority five" → 5
+   - "urgent" or "high priority" → 5
+   - "important" → 4
+   - "low priority" → 1
+   - If not mentioned, default to 2
+
+Parse: "${input}"
+
+Return ONLY valid JSON: {title, description (optional), type, frequency (null for single), deadline (null if not mentioned), priority}. No markdown, no explanation.`;
+
+    console.log('Calling Gemini API (using fast model)');
+    // Use gemini-2.5-flash-lite for faster responses
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-lite',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        temperature: 0.3, // Lower temperature for more consistent, faster responses
       },
-      {
-        headers: {
-          "Content-Type": "application/json"
-        }
-      }
-    );
+    });
     
-    const content = response.data.candidates[0].content.parts[0].text;
-    const parsed = JSON.parse(content);
+    console.log('Got response from Gemini 3');
+    
+    if (!response || !response.text) {
+      console.error('No text content in response');
+      return res.status(500).json({ 
+        message: 'No text content in API response',
+      });
+    }
+    
+    const content = response.text;
+    console.log('Got text content, length:', content?.length);
+
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch (parseError) {
+      console.error('Failed to parse JSON from Gemini:', content);
+      console.error('Parse error:', parseError);
+      return res.status(500).json({ 
+        message: 'Failed to parse JSON response',
+        rawContent: content.substring(0, 200) // First 200 chars for debugging
+      });
+    }
     
     // Calculate nextDueDate for habits
     if (parsed.type === 'habit' && parsed.frequency) {
@@ -67,14 +96,76 @@ Return ONLY valid JSON, no markdown, no explanation.`
       
       // Parse frequency and calculate next due date
       const freq = parsed.frequency.toLowerCase();
-      if (freq.includes('daily') || freq.includes('every day')) {
+      
+      // Parse day of week (sunday, monday, etc.) and time
+      const daysOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      let targetDay = -1;
+      let targetHour = 9; // Default to 9am
+      let targetMinute = 0;
+      
+      // Check for day of week
+      for (let i = 0; i < daysOfWeek.length; i++) {
+        if (freq.includes(daysOfWeek[i])) {
+          targetDay = i;
+          break;
+        }
+      }
+      
+      // Parse time (9am, 10pm, etc.)
+      const timeMatch = freq.match(/(\d{1,2})\s*(am|pm|:(\d{2}))/i);
+      if (timeMatch) {
+        let hour = parseInt(timeMatch[1]);
+        const ampm = timeMatch[2]?.toLowerCase();
+        if (ampm === 'pm' && hour !== 12) hour += 12;
+        if (ampm === 'am' && hour === 12) hour = 0;
+        targetHour = hour;
+        if (timeMatch[3]) {
+          targetMinute = parseInt(timeMatch[3]);
+        }
+      }
+      
+      // If specific day of week is mentioned
+      if (targetDay !== -1) {
+        const currentDay = now.getDay();
+        let daysUntilTarget = targetDay - currentDay;
+        
+        // If the target day has passed this week, schedule for next week
+        if (daysUntilTarget < 0 || (daysUntilTarget === 0 && (now.getHours() > targetHour || (now.getHours() === targetHour && now.getMinutes() >= targetMinute)))) {
+          daysUntilTarget += 7;
+        }
+        
+        nextDue.setDate(nextDue.getDate() + daysUntilTarget);
+        nextDue.setHours(targetHour, targetMinute, 0, 0);
+      } else if (freq.includes('daily') || freq.includes('everyday') || freq.includes('every day')) {
+        // Daily habits - schedule for tomorrow
         nextDue.setDate(nextDue.getDate() + 1);
+        if (timeMatch) {
+          nextDue.setHours(targetHour, targetMinute, 0, 0);
+        } else {
+          // Default to 9am if no time specified
+          nextDue.setHours(9, 0, 0, 0);
+        }
       } else if (freq.includes('weekly') || freq.includes('every week')) {
         nextDue.setDate(nextDue.getDate() + 7);
+        if (timeMatch) {
+          nextDue.setHours(targetHour, targetMinute, 0, 0);
+        } else {
+          nextDue.setHours(9, 0, 0, 0);
+        }
       } else if (freq.includes('every 2 weeks') || freq.includes('bi-weekly')) {
         nextDue.setDate(nextDue.getDate() + 14);
+        if (timeMatch) {
+          nextDue.setHours(targetHour, targetMinute, 0, 0);
+        } else {
+          nextDue.setHours(9, 0, 0, 0);
+        }
       } else if (freq.includes('monthly') || freq.includes('every month')) {
         nextDue.setMonth(nextDue.getMonth() + 1);
+        if (timeMatch) {
+          nextDue.setHours(targetHour, targetMinute, 0, 0);
+        } else {
+          nextDue.setHours(9, 0, 0, 0);
+        }
       } else {
         // Try to extract number of days
         const match = freq.match(/(\d+)\s*(day|days|week|weeks|month|months)/);
@@ -88,8 +179,18 @@ Return ONLY valid JSON, no markdown, no explanation.`
           } else if (unit.includes('month')) {
             nextDue.setMonth(nextDue.getMonth() + num);
           }
+          if (timeMatch) {
+            nextDue.setHours(targetHour, targetMinute, 0, 0);
+          } else {
+            nextDue.setHours(9, 0, 0, 0);
+          }
+        } else {
+          // Default: daily if no pattern matched
+          nextDue.setDate(nextDue.getDate() + 1);
+          nextDue.setHours(9, 0, 0, 0);
         }
       }
+      
       parsed.nextDueDate = nextDue.toISOString();
     }
     
@@ -131,22 +232,87 @@ Return ONLY valid JSON, no markdown, no explanation.`
       parsed.nextDueDate = null;
     }
     
-    // Set defaults
+    // Set defaults - ensure all required fields are present
     parsed.createdAt = new Date().toISOString();
-    parsed.completed = false;
-    parsed.deferred = false;
-    parsed.reflection = null;
-    parsed.completedAt = null;
-    parsed.lastCompletedAt = null;
+    parsed.completed = parsed.completed !== undefined ? parsed.completed : false;
+    parsed.deferred = parsed.deferred !== undefined ? parsed.deferred : false;
+    parsed.reflection = parsed.reflection || null;
+    parsed.completedAt = parsed.completedAt || null;
+    parsed.lastCompletedAt = parsed.lastCompletedAt || null;
     
-    // Ensure priority is a number between 1-5
-    if (!parsed.priority || parsed.priority < 1 || parsed.priority > 5) {
-      parsed.priority = parsed.deadline ? 4 : 3; // Default to 4 if has deadline, 3 otherwise
+    // Ensure type is set (default to 'single' if not specified)
+    if (!parsed.type || (parsed.type !== 'single' && parsed.type !== 'habit')) {
+      parsed.type = 'single';
     }
     
+    // Ensure priority is a number between 1-5, default to 2 if not specified
+    if (!parsed.priority || parsed.priority < 1 || parsed.priority > 5) {
+      parsed.priority = 2; // Default priority is 2
+    }
+    
+    // Ensure title exists
+    if (!parsed.title) {
+      throw new Error('Task title is required');
+    }
+    
+    console.log('Final parsed task before saving:', JSON.stringify(parsed, null, 2));
+    
     res.status(200).json(parsed);
-  } catch (error) {
-    console.error('Error parsing task:', error);
-    res.status(500).json({ message: 'Error parsing task', error: error instanceof Error ? error.message : 'Unknown error' });
+  } catch (error: any) {
+    console.error('=== ERROR PARSING TASK ===');
+    console.error('Error type:', typeof error);
+    console.error('Error:', error);
+    console.error('Error message:', error.message);
+    console.error('Error name:', error.name);
+    console.error('Error code:', error.code);
+    console.error('Error stack:', error.stack);
+    
+    // Google Generative AI SDK errors might have different structure
+    if (error.status) {
+      console.error('Error status:', error.status);
+    }
+    if (error.statusText) {
+      console.error('Error statusText:', error.statusText);
+    }
+    if (error.response) {
+      console.error('Error response:', error.response);
+    }
+    if (error.cause) {
+      console.error('Error cause:', error.cause);
+    }
+    
+    // Extract more detailed error information
+    let errorMessage = 'Unknown error';
+    let errorDetails: any = null;
+    
+    if (error.message) {
+      errorMessage = error.message;
+    }
+    
+    // Try different ways to get error details
+    if (error.response?.data) {
+      errorDetails = error.response.data;
+    } else if (error.status && error.statusText) {
+      errorDetails = {
+        status: error.status,
+        statusText: error.statusText,
+        message: error.message,
+      };
+    } else if (error.cause) {
+      errorDetails = error.cause;
+    } else {
+      errorDetails = {
+        name: error.name,
+        message: error.message,
+        code: error.code,
+        status: error.status,
+      };
+    }
+    
+    res.status(500).json({ 
+      message: 'Error parsing task',
+      error: errorMessage,
+      details: errorDetails,
+    });
   }
 }
