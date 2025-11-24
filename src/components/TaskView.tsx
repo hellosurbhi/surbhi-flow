@@ -18,6 +18,7 @@ import axios from 'axios';
 import { db } from '@/services/firebaseService';
 import { doc, updateDoc, deleteField } from 'firebase/firestore';
 import ReflectionModal from './ReflectionModal';
+import PriorityDeadlineModal from './PriorityDeadlineModal';
 
 interface Task {
   id: string;
@@ -48,6 +49,7 @@ const TaskView: React.FC<TaskViewProps> = ({ task, onTaskComplete, onTaskDeferre
   const [showReflectionModal, setShowReflectionModal] = useState(false);
   const [showPriorityCheck, setShowPriorityCheck] = useState(false);
   const [priorityCheckAnswer, setPriorityCheckAnswer] = useState('');
+  const [showPriorityDeadlineModal, setShowPriorityDeadlineModal] = useState(false);
   const [dueDateInfo, setDueDateInfo] = useState<{ text: string; isOverdue: boolean } | null>(null);
   const [isClient, setIsClient] = useState(false);
 
@@ -158,6 +160,8 @@ const TaskView: React.FC<TaskViewProps> = ({ task, onTaskComplete, onTaskDeferre
         reflection,
         reflectionDate: new Date().toISOString()
       });
+      // Update local task state to show reflection immediately
+      (task as any).reflection = reflection;
     }
     setShowReflectionModal(false);
     setShowPriorityCheck(true);
@@ -166,34 +170,54 @@ const TaskView: React.FC<TaskViewProps> = ({ task, onTaskComplete, onTaskDeferre
   const handlePriorityCheckSubmit = async () => {
     if (task.id) {
       if (priorityCheckAnswer === 'changed') {
-        // Task is no longer relevant, mark as completed or remove
+        // Task is no longer relevant, mark as completed
         await updateDoc(doc(db, 'tasks', task.id), {
           completed: true,
           completedAt: new Date().toISOString(),
           reason: 'Task no longer relevant'
         });
+        // Only call onTaskSkipped if task is completed (no longer relevant)
+        onTaskSkipped();
       } else if (priorityCheckAnswer === 'avoiding') {
-        // Still priority but avoiding - update priority or deadline if needed
-        // For now, just defer it
+        // Still priority but avoiding - keep the task visible, don't defer it
+        // Just update the reflection date, keep task active so they can see their reflection
         await updateDoc(doc(db, 'tasks', task.id), {
-          deferred: true,
-          deferredAt: new Date().toISOString()
+          // Don't set deferred - keep it active so it stays visible
+          reflectionDate: new Date().toISOString()
         });
+        // Don't call onTaskSkipped - keep the task visible so they can see their reflection
       }
     }
     setShowPriorityCheck(false);
     setPriorityCheckAnswer('');
-    onTaskSkipped();
+    // Task stays visible with reflection displayed
   };
 
-  const handleNotPriority = async () => {
+  const handleNotPriority = () => {
+    // Open the priority/deadline modal instead of deferring
+    setShowPriorityDeadlineModal(true);
+  };
+
+  const handlePriorityDeadlineSubmit = async (priority: number, deadline: string | null) => {
     if (task.id) {
-      await updateDoc(doc(db, 'tasks', task.id), {
-        deferred: true,
-        deferredAt: new Date().toISOString()
-      });
+      const updateData: any = {
+        priority,
+        deferred: false, // Remove deferred status since we're updating priority
+      };
+
+      if (deadline) {
+        updateData.deadline = deadline;
+        updateData.nextDueDate = deadline;
+      } else {
+        // If no deadline provided, clear existing deadline
+        updateData.deadline = null;
+        updateData.nextDueDate = null;
+      }
+
+      await updateDoc(doc(db, 'tasks', task.id), updateData);
     }
-    onTaskDeferred();
+    setShowPriorityDeadlineModal(false);
+    // Task will automatically reposition based on new priority/deadline via Firebase listener
   };
 
   const handleComplete = async () => {
@@ -358,6 +382,43 @@ const TaskView: React.FC<TaskViewProps> = ({ task, onTaskComplete, onTaskDeferre
             </Typography>
           )}
 
+          {task.reflection && (
+            <Box
+              sx={{
+                mb: 3,
+                p: 2.5,
+                borderRadius: 2,
+                backgroundColor: '#F2F2F7',
+                border: '1px solid #C7C7CC',
+              }}
+            >
+              <Typography
+                variant="subtitle2"
+                sx={{
+                  mb: 1.5,
+                  fontWeight: 600,
+                  color: '#007AFF',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                }}
+              >
+                ✍️ Your Reflection
+              </Typography>
+              <Typography
+                variant="body2"
+                sx={{
+                  whiteSpace: 'pre-line',
+                  lineHeight: 1.7,
+                  color: '#000000',
+                  fontSize: '0.95rem',
+                }}
+              >
+                {task.reflection}
+              </Typography>
+            </Box>
+          )}
+
           {isOrganizing && (
             <Typography
               variant="body2"
@@ -519,9 +580,20 @@ const TaskView: React.FC<TaskViewProps> = ({ task, onTaskComplete, onTaskDeferre
         taskTitle={task.title}
       />
 
+      <PriorityDeadlineModal
+        open={showPriorityDeadlineModal}
+        onClose={() => setShowPriorityDeadlineModal(false)}
+        onSubmit={handlePriorityDeadlineSubmit}
+        taskTitle={task.title}
+        currentPriority={task.priority}
+        currentDeadline={task.deadline || null}
+      />
+
       <Dialog
         open={showPriorityCheck}
         onClose={() => {}}
+        disableEnforceFocus={false}
+        disableAutoFocus={false}
         PaperProps={{
           sx: {
             backgroundColor: '#FFFFFF',

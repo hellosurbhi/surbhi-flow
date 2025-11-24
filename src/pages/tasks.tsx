@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Container,
   Typography,
@@ -41,6 +41,61 @@ const TasksPage = () => {
     setIsClient(true);
   }, []);
 
+  // Sort tasks by priority (1 = highest, 5 = lowest) and deadline
+  const sortTasks = useCallback((tasksList: Task[]): Task[] => {
+    if (!tasksList || tasksList.length === 0) return [];
+    
+    return [...tasksList].sort((a, b) => {
+      // First, prioritize non-deferred tasks
+      if (a.deferred !== b.deferred) {
+        return a.deferred ? 1 : -1;
+      }
+
+      // PRIMARY SORT: Priority (1 = highest, 5 = lowest)
+      const aPriority = a.priority || 2;
+      const bPriority = b.priority || 2;
+      if (aPriority !== bPriority) {
+        return aPriority - bPriority; // Lower number = higher priority (1 before 5)
+      }
+
+      // SECONDARY SORT: Due date (earlier deadlines first)
+      const getDueDate = (task: Task): Date | null => {
+        if (task.type === 'habit' && task.nextDueDate) {
+          return parseISO(task.nextDueDate);
+        }
+        if (task.deadline) {
+          return parseISO(task.deadline);
+        }
+        return null;
+      };
+
+      const aDue = getDueDate(a);
+      const bDue = getDueDate(b);
+      const aOverdue = aDue ? isPast(aDue) : false;
+      const bOverdue = bDue ? isPast(bDue) : false;
+
+      // Overdue tasks come first (among same priority)
+      if (aOverdue !== bOverdue) {
+        return aOverdue ? -1 : 1; // Overdue tasks come first
+      }
+
+      // If both are overdue or neither are, sort by earliest due date
+      if (aDue && bDue) {
+        const dateDiff = aDue.getTime() - bDue.getTime();
+        if (dateDiff !== 0) {
+          return dateDiff; // Earlier dates first
+        }
+      } else if (aDue && !bDue) {
+        return -1; // Tasks with due dates come before those without
+      } else if (!aDue && bDue) {
+        return 1; // Tasks without due dates go after those with
+      }
+
+      // If everything is equal, maintain stable sort
+      return 0;
+    });
+  }, []);
+
   useEffect(() => {
     if (!isClient) return;
 
@@ -59,7 +114,7 @@ const TasksPage = () => {
         });
 
         if (isMounted) {
-          setTasks(tasksData);
+          setTasks(sortTasks(tasksData)); // Sort tasks immediately after fetching
         }
       });
     } catch (error) {
@@ -76,7 +131,7 @@ const TasksPage = () => {
         }
       }
     };
-  }, [isClient]);
+  }, [isClient, sortTasks]);
 
   const handleComplete = async (taskId: string, task: Task) => {
     if (task.type === 'habit') {
@@ -127,18 +182,24 @@ const TasksPage = () => {
   };
 
   const getFilteredTasks = () => {
+    let filtered: Task[] = [];
     switch (tabValue) {
       case 0: // Active
-        return tasks.filter(
+        filtered = tasks.filter(
           (task) => !task.completed && !task.deferred
         );
+        break;
       case 1: // Completed
-        return tasks.filter((task) => task.completed === true);
+        filtered = tasks.filter((task) => task.completed === true);
+        break;
       case 2: // Deferred
-        return tasks.filter((task) => task.deferred === true);
+        filtered = tasks.filter((task) => task.deferred === true);
+        break;
       default:
-        return tasks;
+        filtered = tasks;
     }
+    // Return sorted tasks (tasks are already sorted, but ensure filtered ones are too)
+    return sortTasks(filtered);
   };
 
   const getDueDateDisplay = (task: Task) => {

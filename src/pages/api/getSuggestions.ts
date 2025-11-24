@@ -26,23 +26,27 @@ export default async function handler(
     // Initialize with API key
     const ai = new GoogleGenAI({ apiKey });
 
-    const prompt = `You are a helpful assistant specializing in ADHD-friendly strategies and motivation techniques. 
-When someone is struggling to start a task, provide:
-1. A brief, empathetic acknowledgment
-2. 2-3 specific, actionable ADHD strategies to break the task into smaller steps or overcome resistance
-3. A motivational nudge that's encouraging but not overwhelming
+    const prompt = `You are a compassionate, motivating assistant specializing in ADHD-friendly strategies and helping people overcome procrastination.
 
-Keep it concise (3-4 sentences max), practical, and focused on getting started rather than completing everything.
+The user is struggling with this task: "${taskTitle}"${taskDescription ? ` - ${taskDescription}` : ''}.
 
-The user is avoiding this task: "${taskTitle}"${taskDescription ? ` - ${taskDescription}` : ''}. 
-They need help getting started. Provide ADHD-friendly strategies and motivation.`;
+Provide a comprehensive, encouraging response that includes:
+
+1. **How to Start** (2-3 specific, actionable first steps they can take RIGHT NOW - make them tiny and easy)
+2. **Strategies to Get Started** (ADHD-friendly techniques like breaking it down, using timers, body doubling, etc.)
+3. **How to Complete the Task** (a clear path forward with manageable steps)
+4. **Motivation** (describe how GOOD they will feel when they complete it - the relief, pride, sense of accomplishment, reduced stress, etc. Be specific and emotional)
+
+Format your response in a warm, encouraging tone. Make it feel personal and supportive, not preachy. Keep it practical and actionable. Aim for 5-7 sentences total - enough to be helpful but not overwhelming.
+
+Focus on making them feel capable and motivated to take that first small step.`;
 
     console.log('Calling Gemini API for suggestions');
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-lite',
       contents: prompt,
       config: {
-        temperature: 0.7,
+        temperature: 0.8, // Slightly higher for more creative, motivational responses
       },
     });
     

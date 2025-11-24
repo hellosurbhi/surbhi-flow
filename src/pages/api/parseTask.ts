@@ -24,7 +24,9 @@ export default async function handler(
 
   try {
     // Initialize with API key
+    console.log('Initializing GoogleGenAI with API key (length):', apiKey ? apiKey.length : 0);
     const ai = new GoogleGenAI({ apiKey });
+    console.log('GoogleGenAI initialized successfully');
 
     const prompt = `You are an intelligent task parser like Todoist. Parse natural language into structured JSON.
 
@@ -55,26 +57,67 @@ Parse: "${input}"
 Return ONLY valid JSON: {title, description (optional), type, frequency (null for single), deadline (null if not mentioned), priority}. No markdown, no explanation.`;
 
     console.log('Calling Gemini API (using fast model)');
+    console.log('Input prompt length:', prompt.length);
     // Use gemini-2.5-flash-lite for faster responses
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-lite',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        temperature: 0.3, // Lower temperature for more consistent, faster responses
-      },
-    });
+    let response;
+    try {
+      response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-lite',
+        contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+          temperature: 0.3, // Lower temperature for more consistent, faster responses
+        },
+      });
+      console.log('Gemini API call completed successfully');
+    } catch (apiError: any) {
+      console.error('=== GEMINI API CALL ERROR ===');
+      console.error('Error type:', typeof apiError);
+      console.error('Error:', apiError);
+      console.error('Error message:', apiError?.message);
+      console.error('Error name:', apiError?.name);
+      console.error('Error code:', apiError?.code);
+      console.error('Error stack:', apiError?.stack);
+      throw apiError; // Re-throw to be caught by outer catch
+    }
     
-    console.log('Got response from Gemini 3');
+    console.log('Got response from Gemini, response type:', typeof response);
+    console.log('Response keys:', response ? Object.keys(response) : 'null');
     
-    if (!response || !response.text) {
-      console.error('No text content in response');
+    // Handle different response structures
+    let content: string;
+    
+    if (response && typeof response === 'object') {
+      // Try different possible response structures
+      if ('text' in response && typeof response.text === 'string') {
+        content = response.text;
+      } else if ('response' in response && response.response && 'text' in response.response) {
+        content = (response.response as any).text;
+      } else if ('content' in response) {
+        const responseContent = (response as any).content;
+        if (typeof responseContent === 'string') {
+          content = responseContent;
+        } else if (responseContent && typeof responseContent === 'object' && 'text' in responseContent) {
+          content = responseContent.text;
+        } else {
+          console.error('Response structure:', JSON.stringify(response, null, 2));
+          throw new Error('Unexpected response structure - content is not a string');
+        }
+      } else {
+        console.error('Response structure:', JSON.stringify(response, null, 2));
+        throw new Error('Unexpected response structure from Gemini API');
+      }
+    } else {
+      throw new Error('Invalid response from Gemini API');
+    }
+    
+    if (!content || content.trim().length === 0) {
+      console.error('Empty content received');
       return res.status(500).json({ 
-        message: 'No text content in API response',
+        message: 'Empty content received from API',
       });
     }
     
-    const content = response.text;
     console.log('Got text content, length:', content?.length);
 
     let parsed;

@@ -37,15 +37,24 @@ const HomePage = () => {
     setIsClient(true);
   }, []);
 
-  // Sort tasks by priority and due date (NOT by creation date)
+  // Sort tasks by priority FIRST, then due date
   const sortTasks = (tasksList: Task[]): Task[] => {
+    if (!tasksList || tasksList.length === 0) return [];
+    
     return [...tasksList].sort((a, b) => {
       // First, prioritize non-deferred tasks
       if (a.deferred !== b.deferred) {
         return a.deferred ? 1 : -1;
       }
 
-      // Helper to get due date
+      // PRIMARY SORT: Priority (1 = highest, 5 = lowest)
+      const aPriority = a.priority || 2;
+      const bPriority = b.priority || 2;
+      if (aPriority !== bPriority) {
+        return aPriority - bPriority; // Lower number = higher priority (1 before 5)
+      }
+
+      // SECONDARY SORT: Due date (earlier deadlines first)
       const getDueDate = (task: Task): Date | null => {
         if (task.type === 'habit' && task.nextDueDate) {
           return parseISO(task.nextDueDate);
@@ -61,12 +70,12 @@ const HomePage = () => {
       const aOverdue = aDue ? isPast(aDue) : false;
       const bOverdue = bDue ? isPast(bDue) : false;
 
-      // PRIMARY SORT: Overdue status (overdue tasks first)
+      // Overdue tasks come first (among same priority)
       if (aOverdue !== bOverdue) {
         return aOverdue ? -1 : 1; // Overdue tasks come first
       }
 
-      // SECONDARY SORT: Due date (earlier deadlines first)
+      // If both are overdue or neither are, sort by earliest due date
       if (aDue && bDue) {
         const dateDiff = aDue.getTime() - bDue.getTime();
         if (dateDiff !== 0) {
@@ -78,29 +87,35 @@ const HomePage = () => {
         return 1; // Tasks without due dates go after those with
       }
 
-      // TERTIARY SORT: Priority (higher priority first - 5 before 1)
-      const aPriority = a.priority || 2;
-      const bPriority = b.priority || 2;
-      if (aPriority !== bPriority) {
-        return bPriority - aPriority; // Higher priority first
-      }
-
-      // If everything is equal, maintain stable sort (but don't use creation date)
+      // If everything is equal, maintain stable sort
       return 0;
     });
   };
 
   useEffect(() => {
-    if (!isClient) return;
+    if (!isClient) {
+      console.log('Waiting for client-side rendering...');
+      return;
+    }
     
+    console.log('Client-side ready, setting up Firebase listener...');
     let isMounted = true;
     let unsubscribe: (() => void) | null = null;
     
     try {
+      console.log('Setting up Firebase listener for tasks...');
+      console.log('Firebase db instance:', db);
+      console.log('Firebase collection path: tasks');
+      
       // Get all tasks (we'll filter and sort in the component)
       unsubscribe = onSnapshot(
         collection(db, "tasks"),
         (querySnapshot) => {
+          console.log('=== FIREBASE SNAPSHOT RECEIVED ===');
+          console.log('Snapshot size:', querySnapshot.size);
+          console.log('Snapshot empty:', querySnapshot.empty);
+          console.log('Snapshot metadata:', querySnapshot.metadata);
+          
           // Use requestAnimationFrame to batch state updates
           if (typeof window !== 'undefined' && window.requestAnimationFrame) {
             window.requestAnimationFrame(() => {
@@ -142,11 +157,16 @@ const HomePage = () => {
               console.log(`Active tasks after filtering: ${activeTasks.length}`);
 
               if (isMounted) {
+                console.log('Setting tasks state with', activeTasks.length, 'tasks');
                 setTasks(activeTasks);
                 
                 // Sort and get the first task
                 const sorted = sortTasks(activeTasks);
+                console.log('Sorted tasks:', sorted.map(t => ({ title: t.title, priority: t.priority })));
                 setCurrentTask(sorted.length > 0 ? sorted[0] : null);
+                console.log('Current task set to:', sorted.length > 0 ? sorted[0].title : 'null');
+              } else {
+                console.log('Component unmounted, skipping state update');
               }
             });
           } else {
@@ -194,8 +214,15 @@ const HomePage = () => {
         },
         (error) => {
           console.error('Firebase snapshot error:', error);
+          console.error('Error details:', {
+            code: error.code,
+            message: error.message,
+            stack: error.stack
+          });
         }
       );
+      
+      console.log('Firebase listener set up successfully');
     } catch (error) {
       console.error('Error setting up Firebase listener:', error);
     }

@@ -38,6 +38,8 @@ const ReflectionModal: React.FC<ReflectionModalProps> = ({ open, onClose, onSubm
       onClose={onClose}
       maxWidth="md"
       fullWidth
+      disableEnforceFocus={false}
+      disableAutoFocus={false}
       PaperProps={{
         sx: {
           backgroundColor: '#FFFFFF',
